@@ -22,19 +22,19 @@ You should install this backend using setup.py or pip.
 
 This backend uses MySQLdb to connect to Sphinx using it's SQL emulation. 
 
-    $ pip install MySQLdb
+    $ pip install MySQL-python
 
 The database connection pooling from SQLAlchemy is used if available. It is highly recommended that you install this.
 
-    $ pip install sqlalchemy
+    $ pip install SQLAlchemy
 
 Once installed, you must define a connection in your settings.py file:
 
     HAYSTACK_CONNECTIONS = {
         'default': {
             'ENGINE': 'sphinx_haystack.SphinxEngine',
-            # Name of the Sphinx index.
-            'INDEX': 'rt',
+            # Name of the Sphinx real-time index.
+            'INDEX': 'notes',
         },
     }
 
@@ -51,7 +51,7 @@ To configure a real-time index, you do the following in /etc/sphinx.conf. The fo
     #
     # you can run INSERT, REPLACE, and DELETE on this index on the fly
     # using MySQL protocol (see 'listen' directive below)
-    index rt
+    index notes
     {
             # 'rt' index type must be specified to use RT index
             type                    = rt
