@@ -58,7 +58,7 @@ To configure a real-time index, you do the following in /etc/sphinx.conf. The fo
 
             # index files path and file name, without extension
             # mandatory, path must be writable, extensions will be auto-appended
-            path                    = /var/tmp/indexes/rt
+            path                    = /var/data/indexes/notes
 
             # RAM chunk size limit
             # RT index will keep at most this much data in RAM, then flush to disk
