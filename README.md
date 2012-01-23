@@ -32,7 +32,7 @@ Once installed, you must define a connection in your settings.py file:
 
     HAYSTACK_CONNECTIONS = {
         'default': {
-            'ENGINE': 'sphinx_haystack.SphinxEngine',
+            'ENGINE': 'sphinx_haystack.sphinx_backend.SphinxEngine',
             # Name of the Sphinx real-time index.
             'INDEX': 'notes',
         },
