@@ -30,5 +30,5 @@ setup(
     url = 'http://github.com/btimby/haystack-sphinx/',
     download_url = download_url,
     license = 'GPLv3',
-    py_modules = ['sphinx_backend'],
+    py_modules = ['sphinx_haystack'],
 )

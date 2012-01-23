@@ -2,7 +2,7 @@ import logging
 import warnings
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery
+from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery, log_query
 from haystack.exceptions import MissingDependency
 from haystack.models import SearchResult
 try:
@@ -17,6 +17,7 @@ try:
 except ImportError:
     connection_pooling = False
 
+DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 9306
 
 
@@ -26,25 +27,20 @@ class SphinxSearchBackend(BaseSearchBackend):
         # TODO: determine the version number of Sphinx.
         # Parse from server banner "Server version: 1.10-dev (r2153)"
         super(SphinxSearchBackend, self).__init__(connection_alias, **connection_options)
+        self.conn_kwargs = {
+            'host': connection_options.get('HOST', DEFAULT_HOST),
+            'port': connection_options.get('PORT', DEFAULT_PORT),
+        }
         try:
-            self.conn_kwargs = {
-                'host': connection_options.get('HOST', 'localhost'),
-                'port': connection_options.get('PORT', DEFAULT_PORT),
-                'user': connection_options.get('USER'),
-                'passwd': connection_options.get('PASSWD'),
-            }
-        except KeyError, e:
-            raise ImproperlyConfigured('Missing connection parameter %s for sphinx-haystack.' % e.args[0])
-        try:
-            self.index_name = connection_options.get('INDEX')
+            self.index_name = connection_options['INDEX']
         except KeyError:
             raise ImproperlyConfigured('Missing index name for sphinx-haystack. Please define INDEX.')
         self.log = logging.getLogger('haystack')
         if not connection_pooling:
-            self.log.WARNING('Connection pooling disabled. Install SQLAlchemy.')
+            self.log.warning('Connection pooling disabled. Install SQLAlchemy.')
 
     def connect(self):
-        return MySQLdb.connect(*self.conn_kwargs)
+        return MySQLdb.connect(**self.conn_kwargs)
 
     def update(self, index, iterable):
         """
@@ -88,16 +84,20 @@ class SphinxSearchBackend(BaseSearchBackend):
         conn = self.connect()
         try:
             curr = conn.cursor()
-            rows = curr.execute('SELECT * FROM {0} WHERE MATCH(%s)'.format(self.index_name), (query_string, ))
+            rows = curr.execute('SELECT * FROM {0} WHERE MATCH(\'{1}\')'.format(self.index_name, query_string))
         finally:
             conn.close()
         results = []
         while True:
-            row = rows.fetchone()
+            row = curr.fetchone()
             if not row:
                 break
             results.append(result_class(row))
-        return results
+        hits = len(results)
+        return {
+            'results': results,
+            'hits': hits,
+        }
 
     def prep_value(self, value):
         return force_unicode(value)
@@ -112,9 +112,23 @@ class SphinxSearchBackend(BaseSearchBackend):
         raise NotImplementedError("Subclasses must provide a way to build their schema.")
 
 
-class SimpleSearchQuery(BaseSearchQuery):
-    def build_query(self):
-        pass
+class SphinxSearchQuery(BaseSearchQuery):
+    def build_query_fragment(self, field, filter_type, value):
+        from haystack import connections
+        if field == 'content':
+            index_fieldname = '@* '
+        else:
+            index_fieldname = u'@%s ' % connections[self._using].get_unified_index().get_index_fieldname(field)
+        value = value.query_string
+        # Build query fragment according to:
+        # http://sphinxsearch.com/docs/2.0.2/extended-syntax.html
+        filter_types = {
+            'contains': '{0}{1}',
+            'startswith': '{0}^{1}',
+            'exact': '{0}={1}',
+        }
+        query_frag = filter_types.get(filter_type).format(index_fieldname, value)
+        return query_frag
 
 
 class SphinxEngine(BaseEngine):
