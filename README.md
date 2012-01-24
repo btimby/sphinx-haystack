@@ -42,6 +42,10 @@ Once installed, you must define a connection in your settings.py file:
         },
     }
 
+You also need to add sphinx_haystack to your INSTALLED_APPS list in settings.py:
+
+    INSTALLED_APPS += ('sphinx_haystack', )
+
 Sphinx Configuration
 ====
 
