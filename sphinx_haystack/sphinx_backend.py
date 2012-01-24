@@ -5,11 +5,12 @@ import warnings
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.encoding import force_unicode
+from django.contrib.contenttypes.models import ContentType
 from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery, log_query
-from haystack.exceptions import MissingDependency
-from haystack.models import SearchResult
+from haystack.exceptions import MissingDependency, SearchBackendError
 from haystack.utils import get_identifier
 from haystack.constants import ID, DJANGO_CT, DJANGO_ID
+from sphinx_haystack.models import Document
 try:
     import MySQLdb
 except ImportError:
@@ -17,7 +18,9 @@ except ImportError:
 try:
     # Pool connections if SQLAlchemy is present.
     import sqlalchemy.pool as pool
-    MySQLdb = pool.manage(MySQLdb)
+    # TODO: troubleshoot 'MySQL server has gone away'
+    # For now disable connection pool.
+    # MySQLdb = pool.manage(MySQLdb)
     connection_pooling = True
 except ImportError:
     connection_pooling = False
@@ -32,17 +35,19 @@ class SphinxSearchBackend(BaseSearchBackend):
         # TODO: determine the version number of Sphinx.
         # Parse from server banner "Server version: 1.10-dev (r2153)"
         super(SphinxSearchBackend, self).__init__(connection_alias, **connection_options)
+        self.log = logging.getLogger('haystack')
         self.conn_kwargs = {
             'host': connection_options.get('HOST', DEFAULT_HOST),
             'port': connection_options.get('PORT', DEFAULT_PORT),
         }
+        if self.conn_kwargs.get('host') == 'localhost':
+            self.log.warning('Using the host \'localhost\' will connect via the MySQL socket. Sphinx listens on a TCP socket.')
         try:
-            self.index_name = connection_options['INDEX']
-        except KeyError:
-            raise ImproperlyConfigured('Missing index name for sphinx-haystack. Please define INDEX.')
-        self.log = logging.getLogger('haystack')
+            self.index_name = connection_options['INDEX_NAME']
+        except KeyError, e:
+            raise ImproperlyConfigured('Missing index name for sphinx-haystack. Please define %s.' % e.args[0])
         if not connection_pooling:
-            self.log.warning('Connection pooling disabled. Install SQLAlchemy.')
+            self.log.warning('Connection pooling disabled for sphinx-haystack. Install SQLAlchemy.')
 
     def _from_python(self, value):
         if isinstance(value, datetime.datetime):
@@ -66,7 +71,9 @@ class SphinxSearchBackend(BaseSearchBackend):
 
     def update(self, index, iterable):
         """
-        Issue an UPDATE query to Sphinx.
+        Issue a REPLACE INTO query to Sphinx. This will either insert or update
+        a document in the index. If the document ID exists, an update is performed.
+        Otherwise a new document is inserted.
         """
         values = []
         # TODO determine fields.
@@ -74,9 +81,15 @@ class SphinxSearchBackend(BaseSearchBackend):
         for name, field in index.fields.items():
             fields.append((name, field))
             field_names.append(name)
+        # TODO: use a transaction to remove documents if we are
+        # unsuccessful in saving to Sphinx.
         for item in iterable:
+            document, created = Document.objects.get_or_create(
+                content_type = ContentType.objects.get_for_model(item),
+                object_id = item.pk
+            )
             row = index.full_prepare(item)
-            row['id'] = item.id
+            row['id'] = document.pk
             values.append([row[f] for f in field_names])
         conn = self._connect()
         try:
@@ -94,21 +107,49 @@ class SphinxSearchBackend(BaseSearchBackend):
 
     def remove(self, obj_or_string):
         """
-        Issue a DELETE query to Sphinx.
+        Issue a DELETE query to Sphinx. Deletes a document by it's document ID.
         """
-        id = get_identifier(obj_or_string)
+        if isinstance(obj_or_string, basestring):
+            app_label, model_name, object_id = obj_or_string.split('.')
+            content_type = ContentType.objects.get_by_natural_key(app_label, model_name)
+        else:
+            content_type = ContentType.objects.get_for_model(obj_or_string)
+            object_id = obj_or_string.pk
+        try:
+            document = Document.objects.get(
+                content_type=content_type,
+                object_id=object_id
+            )
+        except Document.DoesNotExist:
+            # Already removed?
+            return
         conn = self._connect()
         try:
+            # TODO: use a transaction to delete both atomically.
             curr = conn.cursor()
-            curr.execute('DELETE FROM {0} WHERE id = %s'.format(self.index_name), (id, ))
+            curr.execute('DELETE FROM {0} WHERE id = %s'.format(self.index_name), (document.pk, ))
+            document.delete()
         finally:
             conn.close()
 
     def clear(self, models=[], commit=True):
-        # Do not issue a DELETE statement for the index. This will just add all
-        # the documents to the kill list. If the user actually wants to delete
-        # the index, they will need to issue an rm for the index data file and binlog.
-        raise NotImplementedError('Cannot delete index via Sphinx Backend.')
+        """
+        Clears all contents from index. This method iteratively gets a list of document
+        ID numbers, then deletes them from the index. It does this in a while loop because
+        Sphinx will limit the result set to 1,000.
+        """
+        conn = self._connect()
+        try:
+            # TODO: use transaction to delete all atomically.
+            curr = conn.cursor()
+            while True:
+                ids = [d.pk for d in Document.objects.all()[:1000]]
+                if not ids:
+                    break
+                curr.execute('DELETE FROM {0} WHERE id IN ({1})'.format(self.index_name, ','.join(map(str, ids))))
+                Document.objects.filter(id__in=ids).delete()
+        finally:
+            conn.close()
 
     @log_query
     def search(self, query_string, sort_by=None, start_offset=0, end_offset=None,
@@ -117,29 +158,44 @@ class SphinxSearchBackend(BaseSearchBackend):
                dwithin=None, distance_point=None,
                limit_to_registered_models=None, result_class=None, **kwargs):
         if result_class is None:
-            result_class = SearchResult
-        query = 'SELECT * FROM {0} WHERE MATCH(\'{1}\')'
+            result_class = Document
+        query = 'SELECT * FROM {0} WHERE MATCH(%s)'
         if start_offset and end_offset:
             query += ' LIMIT {0}, {1}'.format(start_offset, end_offset)
         if end_offset:
             query += ' LIMIT {0}'.format(end_offset)
+        if sort_by:
+            fields, reverse = [], None
+            for field in sort_by:
+                if field.startswith('-'):
+                    if reverse == False:
+                        raise SearchBackendError('Sphinx can only sort by ASC or DESC, not a mix of the two.')
+                    reverse = True
+                else:
+                    if reverse == True:
+                        raise SearchBackendError('Sphinx can only sort by ASC or DESC, not a mix of the two.')
+                    reverse = False
+                fields.append(field)
+            query += ' ORDER BY {0}'.format(', '.join(fields))
+            if reverse:
+                query += ' DESC'
+            else:
+                query += 'ASC'
         conn = self._connect()
         try:
             curr = conn.cursor()
-            rows = curr.execute(query.format(self.index_name, query_string))
+            rows = curr.execute(query.format(self.index_name), (query_string, ))
         finally:
             conn.close()
         results = []
-        # TODO: determine these at run-time:
-        app_label = 'notes'
-        model_name = 'Note'
         while True:
             row = curr.fetchone()
             if not row:
                 break
-            #app_label, model_name = row[DJANGO_CT].split('.')
             id, score = row[:2]
-            results.append(result_class(app_label, model_name, id, score))
+            document = Document.objects.get(pk=id)
+            document.score = score
+            results.append(document)
         hits = len(results)
         return {
             'results': results,
@@ -161,7 +217,7 @@ class SphinxSearchBackend(BaseSearchBackend):
 
 class SphinxSearchQuery(BaseSearchQuery):
     def build_query(self):
-        # TODO: any fields that are not "full text" but an attribute in Sphinx, such
+        # TODO: Any fields that are not "full text" but an attribute in Sphinx, such
         # as an int or timestamp column needs to be handled via regular WHERE clause syntax:
         # ... WHERE attr = 1234 ...
         # However "full text" fields need to be globbed together using the Sphinx Query syntax

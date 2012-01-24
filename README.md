@@ -1,11 +1,14 @@
-A [SmartFile](http://www.smartfile.com/) Open Source project. [Read more](http://www.smartfile.com/open-source.html) about how SmartFile uses and contributes to Open Source software.
+A [SmartFile](http://www.smartfile.com/) Open Source project.
+[Read more](http://www.smartfile.com/open-source.html) about how SmartFile uses and
+contributes to Open Source software.
 
 ![SmartFile](http://www.smartfile.com/images/logo.jpg)
 
 Introduction
 ====
 
-This is a backend for [haystack](http://haystacksearch.org/) that implements support for [Sphinx RT Indexes](http://sphinxsearch.com/docs/2.0.2/rt-indexes.html).
+This is a backend for [haystack](http://haystacksearch.org/) that implements support
+for [Sphinx RT Indexes](http://sphinxsearch.com/docs/2.0.2/rt-indexes.html).
 
 Sphinx RT indexes are real-time indexes managed via SphinxQL (MySQL compatible API).
 
@@ -24,7 +27,8 @@ This backend uses MySQLdb to connect to Sphinx using it's SQL emulation.
 
     $ pip install MySQL-python
 
-The database connection pooling from SQLAlchemy is used if available. It is highly recommended that you install this.
+The database connection pooling from SQLAlchemy is used if available. It is highly
+recommended that you install this.
 
     $ pip install SQLAlchemy
 
@@ -34,18 +38,24 @@ Once installed, you must define a connection in your settings.py file:
         'default': {
             'ENGINE': 'sphinx_haystack.sphinx_backend.SphinxEngine',
             # Name of the Sphinx real-time index.
-            'INDEX': 'notes',
+            'INDEX_NAME': 'notes',
         },
     }
 
 Sphinx Configuration
 ====
 
-Traditional Sphinx indexes require a data source to be configured. You would then use the indextool command line program to build the index from the data source. Traditional indexes are not supported by this backend.
+Traditional Sphinx indexes require a data source to be configured. You would then use
+the indextool command line program to build the index from the data source. Traditional
+indexes are not supported by this backend.
 
-This backend works with Sphinx Real-Time indexes. This type of index starts out empty (or as a traditional index "converted" to a real time index) and is populated using SQL INSERT/UPDATE/REPLACE INTO queries. Sphinx emulates MySQL server to allow the user to issue these commands directly to it.
+This backend works with Sphinx Real-Time indexes. This type of index starts out empty
+(or as a traditional index "converted" to a real time index) and is populated using SQL
+INSERT/UPDATE/REPLACE INTO queries. Sphinx emulates MySQL server to allow the user to
+issue these commands directly to it.
 
-To configure a real-time index, you do the following in /etc/sphinx.conf. The following example is for the haystack example Notes application.
+To configure a real-time index, you do the following in /etc/sphinx.conf. The following
+example is for the haystack example Notes application.
 
     # realtime index example
     #
@@ -85,4 +95,21 @@ To configure a real-time index, you do the following in /etc/sphinx.conf. The fo
             # rt_attr_string                = author
     }
 
-Sphinx is different than other haystack backends as it allows multiple "full text" columns. You can do full text searches against any (or all) of these columns. You can do additional filtering on other "attributes" which are non-indexed columns.
+Sphinx is different than other haystack backends as it allows multiple "full text"
+columns. You can do full text searches against any (or all) of these columns.
+You can do additional filtering on other "attributes" which are non-indexed columns.
+
+Additionally, Sphinx requires that you provide a unique ID for each document. One is
+NOT generated for you by Sphinx, and it is required to be unique. This ID must also
+be reproducable, since if you later update a document, you will need to reference
+it using the same ID that it was created with.
+
+Sphinx-haystack handles this by using a Document model. By default, each indexed document
+will result in the creation of a Document instance. This instance will lend it's pk as
+the unique document ID Sphinx requires. In addition, this model is used as the instead
+of the default haystack.model.SearchResult class. It emulates it's behavior.
+
+The Document class uses a GenericForeignKey to reference the indexed object. This adds
+overhead but is the only way to guarantee a unique docuemnt ID when indexing multiple
+models into the same Sphinx index.
+
