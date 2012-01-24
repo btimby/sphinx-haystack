@@ -99,6 +99,9 @@ example is for the haystack example Notes application.
             # rt_attr_string                = author
     }
 
+Implementation Notes.
+====
+
 Sphinx is different than other haystack backends as it allows multiple "full text"
 columns. You can do full text searches against any (or all) of these columns.
 You can do additional filtering on other "attributes" which are non-indexed columns.
