@@ -99,7 +99,7 @@ example is for the haystack example Notes application.
             # rt_attr_string                = author
     }
 
-Implementation Notes.
+Implementation Notes
 ====
 
 Sphinx is different than other haystack backends as it allows multiple "full text"
@@ -113,10 +113,11 @@ it using the same ID that it was created with.
 
 Sphinx-haystack handles this by using a Document model. By default, each indexed document
 will result in the creation of a Document instance. This instance will lend it's pk as
-the unique document ID Sphinx requires. In addition, this model is used as the instead
-of the default haystack.model.SearchResult class. It emulates it's behavior.
+the unique document ID Sphinx requires. In addition, this model is used as the search()
+method's result_class instead of the default haystack.model.SearchResult class. It
+emulates it's behavior.
 
 The Document class uses a GenericForeignKey to reference the indexed object. This adds
-overhead but is the only way to guarantee a unique docuemnt ID when indexing multiple
+overhead but is the only way to guarantee a unique document ID when indexing multiple
 models into the same Sphinx index.
 

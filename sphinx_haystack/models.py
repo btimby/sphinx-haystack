@@ -19,8 +19,25 @@ class Document(models.Model):
     object = generic.GenericForeignKey('content_type', 'object_id')
 
     def __init__(self, *args, **kwargs):
-        self.score = kwargs.pop('score', None)
+        self._score = kwargs.pop('score', None)
         super(Document, self).__init__(*args, **kwargs)
+
+    def _get_score(self):
+        """
+        Retrieves the score from a private attribute (or 0 if missing).
+        """
+        return getattr(self, '_score', 0)
+
+    def _set_score(self, value):
+        """
+        Sets the score to a private attribute.
+        """
+        setattr(self, '_score', value)
+
+    score = property(_get_score, _set_score)
+    """
+    Handles the score when being used as search result.
+    """
 
     @property
     def model(self):
